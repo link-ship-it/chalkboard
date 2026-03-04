@@ -406,6 +406,114 @@ def cmd_complete(args):
     print(f"Task {args.task_id} marked as done and archived to {archive}")
 
 
+def cmd_init(args):
+    """Initialize liuyanban for multi-agent collaboration."""
+    agents = [a.strip() for a in args.agents.split(",") if a.strip()]
+    profiles = [p.strip() for p in (args.profiles or "").split(",") if p.strip()]
+    skill_source = Path(args.skill_dir or Path(__file__).resolve().parent.parent)
+
+    if not agents:
+        print("Error: --agents is required (comma-separated agent names)", file=sys.stderr)
+        sys.exit(1)
+
+    board_dir = _board_dir()
+    archive_dir = _archive_dir()
+    print(f"Board directory: {board_dir}")
+    print(f"Archive directory: {archive_dir}")
+    print()
+
+    # Determine OpenClaw workspace directories
+    home = Path.home()
+    workspaces = []
+
+    if profiles:
+        for profile in profiles:
+            if profile == "default":
+                ws = home / ".openclaw" / "workspace" / "skills" / "liuyanban"
+            else:
+                ws = home / f".openclaw-{profile}" / "workspace" / "skills" / "liuyanban"
+            workspaces.append((profile, ws))
+    else:
+        # Auto-detect: look for existing .openclaw* directories
+        default_ws = home / ".openclaw" / "workspace"
+        if default_ws.exists():
+            workspaces.append(("default", default_ws / "skills" / "liuyanban"))
+        for d in sorted(home.glob(".openclaw-*")):
+            if (d / "workspace").exists():
+                profile_name = d.name.replace(".openclaw-", "")
+                workspaces.append((profile_name, d / "workspace" / "skills" / "liuyanban"))
+
+    if not workspaces:
+        print("Warning: No OpenClaw workspaces found. Skipping skill installation.", file=sys.stderr)
+        print("  Install manually: cp -r <liuyanban-dir> ~/.openclaw/workspace/skills/liuyanban", file=sys.stderr)
+    else:
+        skill_files = ["SKILL.md"]
+        script_files = ["scripts/board.py", "scripts/check_todos.py"]
+
+        print(f"Installing skill to {len(workspaces)} workspace(s)...")
+        for profile, ws_path in workspaces:
+            scripts_dir = ws_path / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+
+            for f in skill_files:
+                src = skill_source / f
+                if src.exists():
+                    shutil.copy2(str(src), str(ws_path / f))
+            for f in script_files:
+                src = skill_source / f
+                if src.exists():
+                    shutil.copy2(str(src), str(ws_path / f))
+
+            print(f"  [{profile}] -> {ws_path}")
+        print()
+
+    # Set up bb in PATH
+    bb_src = skill_source / "bb"
+    bb_target = Path("/usr/local/bin/bb")
+    if bb_src.exists() and not bb_target.exists():
+        try:
+            shutil.copy2(str(bb_src), str(bb_target))
+            bb_target.chmod(0o755)
+            print(f"Installed 'bb' command to {bb_target}")
+        except PermissionError:
+            print(f"Note: Could not install 'bb' to {bb_target} (permission denied)")
+            print(f"  Run manually: sudo cp {bb_src} {bb_target} && sudo chmod +x {bb_target}")
+    elif bb_target.exists():
+        print(f"'bb' command already exists at {bb_target}")
+    print()
+
+    # Print cron setup instructions
+    print("Cron setup (run for each OpenClaw instance):")
+    print("=" * 60)
+    for i, agent in enumerate(agents):
+        profile_flag = ""
+        if i < len(profiles) and profiles[i] != "default":
+            profile_flag = f" --profile {profiles[i]}"
+        elif i > 0 and not profiles:
+            profile_flag = f" --profile <profile-name>"
+
+        print(f"  openclaw{profile_flag} cron add \\")
+        print(f'    --name "board-check" --every 2m \\')
+        print(f'    --message "Check the bulletin board for pending TODOs assigned to you. Run: bb my-todos --agent {agent}" \\')
+        print(f"    --announce")
+        print()
+
+    # Print summary
+    print("=" * 60)
+    print("Setup complete!")
+    print()
+    print(f"  Agents:     {', '.join(agents)}")
+    print(f"  Boards:     {board_dir}")
+    print(f"  Archive:    {archive_dir}")
+    if workspaces:
+        print(f"  Workspaces: {len(workspaces)} installed")
+    print()
+    print("Next steps:")
+    print("  1. Run the cron commands above for each instance")
+    print("  2. Send /restart in each bot's chat to load the skill")
+    print("  3. Tell any bot: 'Create a task on the bulletin board'")
+
+
 def cmd_my_todos(args):
     """Show pending TODOs for a specific agent."""
     board = _board_dir()
@@ -486,6 +594,12 @@ def main():
     p_mytodos = sub.add_parser("my-todos", help="Show pending TODOs for an agent")
     p_mytodos.add_argument("--agent", required=True, help="Agent name")
 
+    # init
+    p_init = sub.add_parser("init", help="Initialize liuyanban for multi-agent collaboration")
+    p_init.add_argument("--agents", required=True, help="Comma-separated agent names (e.g. researcher,writer,reviewer)")
+    p_init.add_argument("--profiles", default="", help="Comma-separated OpenClaw profiles (e.g. default,alpha,alpha2)")
+    p_init.add_argument("--skill-dir", default="", help="Path to liuyanban source directory (auto-detected)")
+
     args = parser.parse_args()
 
     commands = {
@@ -496,6 +610,7 @@ def main():
         "todo": cmd_todo,
         "complete": cmd_complete,
         "my-todos": cmd_my_todos,
+        "init": cmd_init,
     }
 
     try:

@@ -18,7 +18,7 @@ IM platforms (Telegram, Discord, Slack) **don't let bots read each other's messa
 
 ## The Solution
 
-**Liuyanban** (留言板, message board) uses the local filesystem as a shared communication layer. Agents read and write structured Markdown files with file-level locking, TODO tracking, and work logs.
+**Liuyanban** (literally "message board") uses the local filesystem as a shared communication layer. Agents read and write structured Markdown files with file-level locking, TODO tracking, and work logs.
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -68,28 +68,27 @@ IM platforms (Telegram, Discord, Slack) **don't let bots read each other's messa
 - **Cron integration** — periodic reminders for pending TODOs
 - **Short CLI** — `bb` wrapper for quick commands
 
-## Install
+## Quick Start
+
+Three commands to get started:
 
 ```bash
-# Clone the repo
 git clone https://github.com/link-ship-it/liuyanban.git
-
-# Copy to your OpenClaw skills directory
-cp -r liuyanban ~/.openclaw-shared/skills/liuyanban
-
-# Make the wrapper executable
-chmod +x ~/.openclaw-shared/skills/liuyanban/bb
-
-# (Optional) Add to PATH for quick access
-echo 'export PATH="$HOME/.openclaw-shared/skills/liuyanban:$PATH"' >> ~/.zshrc
-
-# Copy and edit config
-cp config.example.yaml ~/.liuyanban/config.yaml
+cd liuyanban
+python3 scripts/board.py init --agents "agent-a,agent-b" --profiles "default,alpha"
 ```
+
+The `init` command automatically:
+- Creates board directories (`~/.liuyanban/boards/` and `archive/`)
+- Installs the skill to all detected OpenClaw instances (`~/.openclaw*`)
+- Installs `bb` to your PATH (may need `sudo`)
+- Prints cron setup commands and next steps
+
+> **Note:** If you omit `--profiles`, it auto-detects all OpenClaw instances on your machine.
 
 **Requirements:** Python 3.8+ (no external dependencies)
 
-## Quick Start
+## Usage
 
 ```bash
 # Create a task and assign to agents
@@ -107,14 +106,14 @@ bb read task-20260304-001
 # Log your work
 bb log task-20260304-001 \
   --agent agent-a \
-  --content "Compared LangChain, CrewAI, and AutoGen. See findings below..."
+  --content "Compared LangChain, CrewAI, and AutoGen..."
 
 # Add a TODO for another agent
 bb todo task-20260304-001 \
-  --add "@agent-b: Review agent-a's findings and draft summary"
+  --add "@agent-b: Review findings and draft summary"
 
 # Mark a TODO as done
-bb todo task-20260304-001 --done "Review agent-a"
+bb todo task-20260304-001 --done "Review findings"
 
 # Check your pending TODOs
 bb my-todos --agent agent-b
@@ -123,9 +122,84 @@ bb my-todos --agent agent-b
 bb complete task-20260304-001
 ```
 
+## Real-World Example: Stock Research with Two Agents
+
+Here's how two AI agents collaborated on NVIDIA stock research in a Telegram group chat. The user assigned the work, and the agents coordinated entirely through Liuyanban — neither could see the other's messages.
+
+**Setup:** User runs three OpenClaw agents in one Telegram group:
+- **Potato** — primary researcher (deep dives, financial modeling)  
+- **Snorlax** — challenger/reviewer (pokes holes, checks assumptions)
+
+**The workflow:**
+
+```
+User in Telegram: "Research NVDA using the 5-round method. 
+                   Potato does research, Snorlax checks the work."
+
+      ┌──────────────┐              ┌──────────────┐
+      │   Potato     │              │   Snorlax    │
+      │  (researcher)│              │  (reviewer)  │
+      └──────┬───────┘              └──────┬───────┘
+             │                              │
+             │  bb create --title           │
+             │  "NVDA 5-round research"     │
+             │  --assign potato,snorlax     │
+             ▼                              │
+     ┌───────────────────────────────┐      │
+     │  task-20260304-001.md         │      │
+     │                               │      │
+     │  TODO:                        │      │
+     │  - [ ] @potato: Round 1-5     │      │
+     │  - [ ] @snorlax: Challenge    │      │
+     └───────────────────────────────┘      │
+             │                              │
+             │  bb log ... --content        │
+             │  "FY2026 Rev=$216B,          │
+             │   GM=71%, FCF=$97B..."       │
+             ▼                              │
+     ┌───────────────────────────────┐      │
+     │  Work Log:                    │      │
+     │  ### potato — 14:30           │      │
+     │  Revenue $216B (+65% YoY)     │      │
+     │  Data Center = 90% of rev     │      │
+     │  Target price: $252           │◄─────┘
+     └───────────────────────────────┘  bb read ...
+             │                              │
+             │                              │  bb log ... --content
+             │                              │  "GM dip to 60% in Q1
+             │                              │   needs explanation.
+             │                              │   $252 too aggressive?"
+             │                              ▼
+     ┌───────────────────────────────┐
+     │  ### snorlax — 15:00          │
+     │  Challenge: margin pressure   │
+     │  from Blackwell ramp. Target  │
+     │  should be $220-240 range.    │
+     └───────────────────────────────┘
+             │
+             │  Potato reads challenge,
+             │  refines model, logs update
+             ▼
+     ┌───────────────────────────────┐
+     │  ### potato — 15:30           │
+     │  Updated: GM recovered to 75% │
+     │  by Q4. Revised target: $245  │
+     │  bb todo ... --done "Round 1" │
+     └───────────────────────────────┘
+```
+
+**Key point:** The user just says "do this" in the group chat. Each agent reads the shared board, does its part, and writes back. The user sees progress in the chat and on the board. No agent needs to see the other's Telegram messages.
+
+## More Examples
+
+| Scenario | Description |
+|----------|-------------|
+| [Stock Research](examples/stock-research/) | Two agents do deep research + challenge workflow |
+| [Content Operations](examples/content-ops/) | Multi-agent content pipeline: research → draft → review → publish |
+
 ## OpenClaw Integration
 
-Add to your OpenClaw config:
+The `init` command handles setup automatically. For manual configuration, add to your OpenClaw config:
 
 ```yaml
 skills:
@@ -139,13 +213,6 @@ cron:
 ```
 
 See [SKILL.md](SKILL.md) for the full OpenClaw skill definition.
-
-## Examples
-
-| Scenario | Description |
-|----------|-------------|
-| [Stock Research](examples/stock-research/) | Multiple agents research a stock from different angles |
-| [Content Operations](examples/content-ops/) | Content pipeline: research → draft → review → publish |
 
 ## Documentation
 
