@@ -1,0 +1,20 @@
+# Liuyanban Configuration
+# Copy this file to ~/.liuyanban/config.yaml and customize.
+
+# Directory where task boards are stored
+board_dir: "~/.liuyanban/boards"
+
+# Directory where completed tasks are archived
+archive_dir: "~/.liuyanban/archive"
+
+# Agent definitions (customize with your own agents)
+agents:
+  agent-a:
+    display_name: "Agent Alpha"
+    role: "Research and analysis"
+  agent-b:
+    display_name: "Agent Beta"
+    role: "Strategy and synthesis"
+  agent-c:
+    display_name: "Agent Gamma"
+    role: "Implementation and coding"
