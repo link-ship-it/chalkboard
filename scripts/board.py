@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Liuyanban (留言板) CLI — Multi-agent collaboration through shared Markdown files.
+Liuyanban CLI — Multi-agent collaboration through shared Markdown files.
 
 Commands:
   create    Create a new task board
@@ -438,7 +438,7 @@ def cmd_my_todos(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="bb",
-        description="Liuyanban (留言板) — Multi-agent collaboration via shared Markdown files",
+        description="Liuyanban — Multi-agent collaboration via shared Markdown files",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

@@ -1,7 +1,6 @@
 <p align="center">
-  <h1 align="center">留言板 Liuyanban</h1>
+  <h1 align="center">Liuyanban</h1>
   <p align="center">Multi-agent collaboration through shared Markdown files</p>
-  <p align="center">多智能体协作留言板 — 通过共享 Markdown 文件实现 AI Agent 间通信</p>
 </p>
 
 <p align="center">
@@ -13,17 +12,13 @@
 
 ---
 
-## The Problem / 问题
+## The Problem
 
 IM platforms (Telegram, Discord, Slack) **don't let bots read each other's messages**. If you run multiple AI agents in a group chat, they are completely blind to one another — no shared context, no coordination, no collaboration.
 
-即时通讯平台（Telegram、Discord、Slack）**不允许机器人读取彼此的消息**。当多个 AI Agent 在同一群聊中运行时，它们彼此完全不可见 — 无法共享上下文、无法协调、无法协作。
+## The Solution
 
-## The Solution / 解决方案
-
-**Liuyanban** (留言板, "message board") uses the local filesystem as a shared communication layer. Agents read and write structured Markdown files with file-level locking, TODO tracking, and work logs.
-
-**留言板** 使用本地文件系统作为共享通信层。Agent 通过文件级锁定、TODO 追踪和工作日志来读写结构化的 Markdown 文件。
+**Liuyanban** (留言板, message board) uses the local filesystem as a shared communication layer. Agents read and write structured Markdown files with file-level locking, TODO tracking, and work logs.
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -63,7 +58,7 @@ IM platforms (Telegram, Discord, Slack) **don't let bots read each other's messa
      └────────────────────────────────────────────────┘
 ```
 
-## Features / 功能特性
+## Features
 
 - **Cross-platform file locking** — `fcntl` on Unix, `msvcrt` on Windows
 - **Structured task boards** — YAML frontmatter + Markdown body
@@ -73,7 +68,7 @@ IM platforms (Telegram, Discord, Slack) **don't let bots read each other's messa
 - **Cron integration** — periodic reminders for pending TODOs
 - **Short CLI** — `bb` wrapper for quick commands
 
-## Install / 安装
+## Install
 
 ```bash
 # Clone the repo
@@ -94,7 +89,7 @@ cp config.example.yaml ~/.liuyanban/config.yaml
 
 **Requirements:** Python 3.8+ (no external dependencies)
 
-## Quick Start / 快速开始
+## Quick Start
 
 ```bash
 # Create a task and assign to agents
@@ -128,7 +123,7 @@ bb my-todos --agent agent-b
 bb complete task-20260304-001
 ```
 
-## OpenClaw Integration / OpenClaw 集成
+## OpenClaw Integration
 
 Add to your OpenClaw config:
 
@@ -145,20 +140,20 @@ cron:
 
 See [SKILL.md](SKILL.md) for the full OpenClaw skill definition.
 
-## Examples / 示例
+## Examples
 
 | Scenario | Description |
 |----------|-------------|
 | [Stock Research](examples/stock-research/) | Multiple agents research a stock from different angles |
 | [Content Operations](examples/content-ops/) | Content pipeline: research → draft → review → publish |
 
-## Documentation / 文档
+## Documentation
 
 - [Quick Start Guide](docs/quickstart.md) — Get up and running in 5 minutes
 - [Architecture](docs/architecture.md) — How it works under the hood
 - [Use Cases](docs/use-cases.md) — Real-world collaboration patterns
 
-## License / 许可证
+## License
 
 [MIT](LICENSE) — Jiushuai Yang
 
