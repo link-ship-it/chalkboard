@@ -10,7 +10,10 @@ Commands:
   todo      Add or complete TODOs
   complete  Mark a task as done and archive it
   my-todos  Show pending TODOs assigned to a specific agent
+  init      Set up Chalkboard for multi-agent collaboration
 """
+
+__version__ = "0.2.0"
 
 import argparse
 import datetime
@@ -36,28 +39,22 @@ try:
         fcntl.flock(f, fcntl.LOCK_UN)
 
 except ImportError:
-    # Windows fallback — lock entire file, not just 1 byte
+    # Windows fallback — msvcrt only supports exclusive locks.
+    # Both shared and exclusive acquire LK_LOCK (exclusive).
+    # This is safe (no data corruption) but slightly less concurrent for reads.
     try:
         import msvcrt
 
         def _lock_shared(f):
-            f.seek(0, 2)  # seek to end to get size
-            size = max(f.tell(), 1)
-            f.seek(0)
-            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, size)
+            """Windows: no true shared lock, falls back to exclusive."""
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
 
         def _lock_exclusive(f):
-            f.seek(0, 2)
-            size = max(f.tell(), 1)
-            f.seek(0)
-            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, size)
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
 
         def _unlock(f):
             try:
-                f.seek(0, 2)
-                size = max(f.tell(), 1)
-                f.seek(0)
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, size)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
             except OSError:
                 pass
 
@@ -135,9 +132,10 @@ def _locked_read(path: Path) -> str:
     return content
 
 
-def _locked_write(path: Path, content: str):
+def _atomic_write(path: Path, content: str):
     """Write a file atomically via temp file + rename (no truncation window)."""
     board = path.parent
+    tmp_path = None
     try:
         fd, tmp_path = tempfile.mkstemp(dir=str(board), suffix=".tmp", prefix=".bb_")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -145,31 +143,35 @@ def _locked_write(path: Path, content: str):
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, str(path))
-    except Exception:
-        # Clean up temp file on failure
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+        tmp_path = None  # successfully replaced, don't clean up
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def _locked_modify(path: Path, modifier_fn):
-    """Read-modify-write a file under a single exclusive lock (prevents TOCTOU).
-    
-    modifier_fn receives the current content string and must return the new content.
+    """Read-modify-write a file safely.
+
+    Reads under exclusive lock, applies modifier_fn, then writes atomically.
+    modifier_fn receives the current content and returns new content (or None to abort).
+    Returns the new content, or None if modifier_fn returned None.
     """
-    with open(path, "r+", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         _lock_exclusive(f)
         try:
             content = f.read()
-            new_content = modifier_fn(content)
-            f.seek(0)
-            f.truncate()
-            f.write(new_content)
-            f.flush()
         finally:
             _unlock(f)
+
+    new_content = modifier_fn(content)
+    if new_content is None:
+        return None
+
+    _atomic_write(path, new_content)
+    return new_content
 
 
 def _find_task(task_id: str) -> Path:
@@ -181,16 +183,27 @@ def _find_task(task_id: str) -> Path:
     if exact.exists():
         return exact
 
-    # Without extension
+    # Strip .md if user passed it
     if task_id.endswith(".md"):
-        no_ext = board / task_id
-        if no_ext.exists():
-            return no_ext
+        stripped = board / task_id
+        if stripped.exists():
+            return stripped
+        task_id = task_id[:-3]
 
-    # Partial match
+    # Exact stem match (prevents 001 matching 0011)
     for f in sorted(board.glob("*.md")):
-        if task_id in f.stem:
+        if f.stem == task_id:
             return f
+
+    # Substring match (only if no exact stem match found)
+    candidates = [f for f in sorted(board.glob("*.md")) if task_id in f.stem]
+    if len(candidates) == 1:
+        return candidates[0]
+    elif len(candidates) > 1:
+        print(f"Error: ambiguous task ID '{task_id}', matches:", file=sys.stderr)
+        for c in candidates:
+            print(f"  {c.stem}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Error: task '{task_id}' not found in {board}", file=sys.stderr)
     sys.exit(1)
@@ -262,7 +275,7 @@ def cmd_create(args):
     content = "\n".join(parts) + "\n"
 
     path = _board_dir() / f"{task_id}.md"
-    _locked_write(path, content)
+    _atomic_write(path, content)
 
     print(f"Created: {path}")
     print(f"Task ID: {task_id}")
@@ -336,8 +349,6 @@ def cmd_todo(args):
         print(f"Added TODO: {todo_line}")
 
     elif args.done:
-        completed_line = [None]
-
         def _mark_done(content):
             pattern = re.compile(
                 r"^- \[ \] (.*" + re.escape(args.done) + r".*)$",
@@ -348,28 +359,16 @@ def cmd_todo(args):
                 return None  # signal not found
             old_line = match.group(0)
             new_line = old_line.replace("- [ ]", "- [x]", 1)
-            completed_line[0] = new_line
             return content.replace(old_line, new_line, 1)
 
-        # Use read+lock manually since we need to handle "not found"
-        with open(path, "r+", encoding="utf-8") as f:
-            _lock_exclusive(f)
-            try:
-                content = f.read()
-                new_content = _mark_done(content)
-                if new_content is None:
-                    print(f"TODO not found matching: {args.done}", file=sys.stderr)
-                    sys.exit(1)
-                f.seek(0)
-                f.truncate()
-                f.write(new_content)
-                f.flush()
-            finally:
-                _unlock(f)
-        print(f"Completed: {completed_line[0]}")
+        result = _locked_modify(path, _mark_done)
+        if result is None:
+            print(f"TODO not found matching: {args.done}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Marked done: {args.done}")
 
     else:
-        # List all TODOs (read-only, shared lock is fine)
+        # List all TODOs
         content = _locked_read(path)
         todos = re.findall(r"^- \[[ x]\] .+$", content, re.MULTILINE)
         if todos:
@@ -383,7 +382,6 @@ def cmd_complete(args):
     """Mark a task as done and move it to the archive."""
     path = _find_task(args.task_id)
 
-    # Read first to check pending TODOs
     content = _locked_read(path)
     pending = re.findall(r"^- \[ \] .+$", content, re.MULTILINE)
     if pending and not args.force:
@@ -393,7 +391,6 @@ def cmd_complete(args):
         print("Use --force to complete anyway.", file=sys.stderr)
         sys.exit(1)
 
-    # Modify under lock
     def _mark_done(content):
         return re.sub(
             r"^status:\s*.+$", "status: done", content, count=1, flags=re.MULTILINE
@@ -407,7 +404,7 @@ def cmd_complete(args):
 
 
 def cmd_init(args):
-    """Initialize chalkboard for multi-agent collaboration."""
+    """Initialize Chalkboard for multi-agent collaboration."""
     agents = [a.strip() for a in args.agents.split(",") if a.strip()]
     profiles = [p.strip() for p in (args.profiles or "").split(",") if p.strip()]
     skill_source = Path(args.skill_dir or Path(__file__).resolve().parent.parent)
@@ -467,23 +464,32 @@ def cmd_init(args):
             print(f"  [{profile}] -> {ws_path}")
         print()
 
-    # Set up bb in PATH
+    # Set up bb in PATH — prefer ~/.local/bin (no sudo needed)
     bb_src = skill_source / "bb"
-    bb_target = Path("/usr/local/bin/bb")
+    local_bin = Path.home() / ".local" / "bin"
+    bb_target = local_bin / "bb"
+
     if bb_src.exists() and not bb_target.exists():
         try:
+            local_bin.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(bb_src), str(bb_target))
             bb_target.chmod(0o755)
             print(f"Installed 'bb' command to {bb_target}")
-        except PermissionError:
-            print(f"Note: Could not install 'bb' to {bb_target} (permission denied)")
-            print(f"  Run manually: sudo cp {bb_src} {bb_target} && sudo chmod +x {bb_target}")
+
+            # Check if ~/.local/bin is in PATH
+            path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+            if str(local_bin) not in path_dirs:
+                print(f"  Note: Add to your shell profile:")
+                print(f'    export PATH="$HOME/.local/bin:$PATH"')
+        except OSError as e:
+            print(f"Note: Could not install 'bb' to {bb_target}: {e}")
+            print(f"  Run manually: cp {bb_src} {bb_target} && chmod +x {bb_target}")
     elif bb_target.exists():
         print(f"'bb' command already exists at {bb_target}")
     print()
 
     # Print cron setup instructions
-    print("Cron setup (run for each OpenClaw instance):")
+    print("Cron setup (add to each OpenClaw instance):")
     print("=" * 60)
     for i, agent in enumerate(agents):
         profile_flag = ""
@@ -494,7 +500,7 @@ def cmd_init(args):
 
         print(f"  openclaw{profile_flag} cron add \\")
         print(f'    --name "board-check" --every 2m \\')
-        print(f'    --message "Check the bulletin board for pending TODOs assigned to you. Run: bb my-todos --agent {agent}" \\')
+        print(f'    --message "Check Chalkboard for pending TODOs. Run: bb my-todos --agent {agent}" \\')
         print(f"    --announce")
         print()
 
@@ -511,7 +517,7 @@ def cmd_init(args):
     print("Next steps:")
     print("  1. Run the cron commands above for each instance")
     print("  2. Send /restart in each bot's chat to load the skill")
-    print("  3. Tell any bot: 'Create a task on the bulletin board'")
+    print(f'  3. Tell any bot: "Create a task on Chalkboard"')
 
 
 def cmd_my_todos(args):
@@ -547,6 +553,9 @@ def main():
     parser = argparse.ArgumentParser(
         prog="bb",
         description="Chalkboard — Multi-agent collaboration via shared Markdown files",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -595,10 +604,10 @@ def main():
     p_mytodos.add_argument("--agent", required=True, help="Agent name")
 
     # init
-    p_init = sub.add_parser("init", help="Initialize chalkboard for multi-agent collaboration")
-    p_init.add_argument("--agents", required=True, help="Comma-separated agent names (e.g. researcher,writer,reviewer)")
-    p_init.add_argument("--profiles", default="", help="Comma-separated OpenClaw profiles (e.g. default,alpha,alpha2)")
-    p_init.add_argument("--skill-dir", default="", help="Path to chalkboard source directory (auto-detected)")
+    p_init = sub.add_parser("init", help="Initialize Chalkboard for multi-agent collaboration")
+    p_init.add_argument("--agents", required=True, help="Comma-separated agent names")
+    p_init.add_argument("--profiles", default="", help="Comma-separated OpenClaw profiles")
+    p_init.add_argument("--skill-dir", default="", help="Path to Chalkboard source directory (auto-detected)")
 
     args = parser.parse_args()
 

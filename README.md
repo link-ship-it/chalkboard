@@ -4,7 +4,13 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE">MIT License</a> ·
+  <img src="https://img.shields.io/badge/python-3.8%2B-blue" alt="Python 3.8+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/dependencies-zero-brightgreen" alt="Zero Dependencies">
+  <img src="https://img.shields.io/github/stars/link-ship-it/chalkboard?style=social" alt="Stars">
+</p>
+
+<p align="center">
   <a href="docs/quickstart.md">Quick Start</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/use-cases.md">Use Cases</a>
@@ -240,7 +246,7 @@ bb todo TASK_ID --add "@synthesizer: Read both logs and create comparison matrix
 - **Zero dependencies** — pure Python 3.8+ standard library
 - **Cross-platform file locking** — prevents concurrent write conflicts
 - **Git-friendly** — plain Markdown files, easy to version control and diff
-- **Works with any agent platform** — OpenClaw, LangChain, custom scripts, anything that can run a shell command
+- **Works with any agent platform** — anything that can run a shell command works. First-class [OpenClaw](https://github.com/openclaw/openclaw) integration included (skill auto-install, cron reminders), but Chalkboard is fully standalone.
 
 > Deep dive: [Architecture docs](docs/architecture.md)
 
