@@ -99,15 +99,20 @@ git clone https://github.com/link-ship-it/chalkboard.git
 cd chalkboard
 python3 scripts/board.py init \
   --agents "agent-a,agent-b" \
-  --profiles "default,alpha"
+  --profiles "default,alpha" \
+  --aliases "Agent A,alice;Agent B,bob" \
+  --channel feishu
 ```
 
 That's it. The `init` command automatically:
 - Creates `~/.chalkboard/boards/` and `archive/` directories
 - Installs the skill to all matching [OpenClaw](https://github.com/openclaw/openclaw) profiles
 - Installs the `bb` CLI to `~/.local/bin`
-- Configures cron jobs so agents automatically check for pending TODOs
+- Configures cron jobs so agents automatically check for pending TODOs (matching all aliases)
+- Sets the delivery channel so cron results go to the right chat
 - Restarts the OpenClaw gateway
+
+**Aliases** let agents find their TODOs regardless of how they're mentioned (`@Agent A`, `@alice`, or `@agent-a` all match). Separate alias groups with `;`, names within a group with `,`.
 
 After init, just add your bots to a group chat and start assigning tasks.
 

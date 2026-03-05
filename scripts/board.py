@@ -431,8 +431,10 @@ def cmd_init(args):
     """
     agents = [a.strip() for a in args.agents.split(",") if a.strip()]
     profiles = [p.strip() for p in (args.profiles or "").split(",") if p.strip()]
+    aliases_raw = [a.strip() for a in (args.aliases or "").split(";") if a.strip()]
     skill_source = Path(args.skill_dir or Path(__file__).resolve().parent.parent)
     check_interval = args.interval or "2m"
+    channel = args.channel or "last"
 
     if not agents:
         print("Error: --agents is required (comma-separated agent names)", file=sys.stderr)
@@ -442,6 +444,19 @@ def cmd_init(args):
         print("Error: --profiles must have the same number of entries as --agents", file=sys.stderr)
         print(f"  Got {len(agents)} agent(s) but {len(profiles)} profile(s)", file=sys.stderr)
         sys.exit(1)
+
+    if aliases_raw and len(aliases_raw) != len(agents):
+        print("Error: --aliases must have the same number of entries as --agents (separated by ;)", file=sys.stderr)
+        sys.exit(1)
+
+    # Build alias lists: each agent gets [agent_name, alias1, alias2, ...]
+    agent_aliases = []
+    for i, agent in enumerate(agents):
+        names = [agent]
+        if i < len(aliases_raw):
+            extra = [a.strip() for a in aliases_raw[i].split(",") if a.strip()]
+            names.extend(extra)
+        agent_aliases.append(names)
 
     print("=" * 60)
     print("  Chalkboard Setup")
@@ -534,9 +549,10 @@ def cmd_init(args):
         for i, agent in enumerate(agents):
             profile = profiles[i] if i < len(profiles) else "default"
             pflag = "" if profile == "default" else f" --profile {profile}"
+            aliases_str = ",".join(agent_aliases[i])
             print(f'    openclaw{pflag} cron add --name "chalkboard-{agent}" --every {check_interval} \\')
-            print(f'      --message "Check Chalkboard for pending TODOs assigned to you. Run: python3 {skill_source}/scripts/check_todos.py {agent}" \\')
-            print(f'      --announce')
+            print(f'      --message "Check Chalkboard for pending TODOs. Run: python3 {skill_source}/scripts/check_todos.py {aliases_str}" \\')
+            print(f'      --announce --channel {channel}')
     else:
         for i, agent in enumerate(agents):
             profile = profiles[i] if i < len(profiles) else "default"
@@ -551,10 +567,12 @@ def cmd_init(args):
 
             # Add cron job
             check_script = str(skill_source / "scripts" / "check_todos.py")
+            # Pass all aliases as comma-separated to check_todos.py
+            aliases_str = ",".join(agent_aliases[i])
             message = (
                 f"You have a Chalkboard cron check. "
                 f"Run this to see your pending TODOs: "
-                f"python3 {check_script} {agent}\n"
+                f"python3 {check_script} {aliases_str}\n"
                 f"If there are pending TODOs, read the task board with bb read <task-id>, "
                 f"do the work, log your results with bb log, and mark TODOs done. "
                 f"If no pending TODOs, reply HEARTBEAT_OK."
@@ -568,6 +586,7 @@ def cmd_init(args):
                     "--every", check_interval,
                     "--message", message,
                     "--announce",
+                    "--channel", channel,
                 ]
             )
 
@@ -699,6 +718,8 @@ def main():
     p_init = sub.add_parser("init", help="Set up Chalkboard (one command, fully automatic)")
     p_init.add_argument("--agents", required=True, help="Comma-separated agent names (e.g. potato,kabishou)")
     p_init.add_argument("--profiles", default="", help="Comma-separated OpenClaw profiles matching agents (e.g. alpha2,default)")
+    p_init.add_argument("--aliases", default="", help="Semicolon-separated alias groups matching agents (e.g. '马铃薯,potato;卡比兽,snorlax')")
+    p_init.add_argument("--channel", default="", help="Delivery channel for cron announcements (e.g. feishu, telegram, discord). Default: last active")
     p_init.add_argument("--interval", default="2m", help="Cron check interval (default: 2m)")
     p_init.add_argument("--skill-dir", default="", help="Path to Chalkboard source directory (auto-detected)")
 

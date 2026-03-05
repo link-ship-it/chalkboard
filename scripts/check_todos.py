@@ -2,6 +2,7 @@
 """
 Cron script for Chalkboard.
 Checks for pending TODOs assigned to a specific agent.
+Supports multiple aliases (e.g. "kabishou,卡比兽,snorlax").
 Outputs a message suitable for OpenClaw cron --announce delivery.
 """
 
@@ -15,11 +16,12 @@ BOARD_DIR = Path(
 )
 
 
-def check(agent: str) -> str:
-    """Check all boards for pending TODOs assigned to the given agent."""
+def check(aliases: list) -> str:
+    """Check all boards for pending TODOs matching any of the given aliases."""
     if not BOARD_DIR.exists():
         return ""
 
+    aliases_lower = [a.lower() for a in aliases]
     files = sorted(BOARD_DIR.glob("*.md"))
     results = []
 
@@ -36,7 +38,10 @@ def check(agent: str) -> str:
                 break
 
         todos = re.findall(r"^- \[ \] .+$", content, re.MULTILINE)
-        my_todos = [t for t in todos if f"@{agent.lower()}" in t.lower()]
+        my_todos = [
+            t for t in todos
+            if any(f"@{alias}" in t.lower() for alias in aliases_lower)
+        ]
 
         if my_todos:
             items = "\n".join(f"  {t}" for t in my_todos)
@@ -56,11 +61,13 @@ def check(agent: str) -> str:
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: check_todos.py <agent_name>", file=sys.stderr)
+        print("Usage: check_todos.py <name>[,<alias1>,<alias2>,...]", file=sys.stderr)
+        print("  Example: check_todos.py kabishou,卡比兽,snorlax", file=sys.stderr)
         sys.exit(1)
 
-    agent = sys.argv[1]
-    msg = check(agent)
+    # Support comma-separated aliases in a single argument
+    aliases = [a.strip() for a in sys.argv[1].split(",") if a.strip()]
+    msg = check(aliases)
 
     if msg:
         print(msg)

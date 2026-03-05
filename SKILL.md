@@ -81,6 +81,8 @@ Example handoff:
 2. **Append only** — never overwrite another agent's work log
 3. **Mark TODOs done** when you complete them
 4. **Leave notes for the next agent** in your log entry
+5. **Only ONE agent creates the task** — if the user assigns work to multiple agents, the first agent mentioned should create the board. Other agents wait and read. Do NOT both create separate tasks.
+6. **Use your display name in TODOs** — write `@马铃薯` not `@malingshu`, `@卡比兽` not `@kabishou`. Use the name others call you in the chat.
 
 ## Cron Reminders
 
