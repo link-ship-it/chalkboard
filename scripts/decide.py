@@ -225,6 +225,112 @@ def trigger_and_forward(agent_name: str, profile: str, session_id: str,
         print(f"  Agent {agent_name} had no reply to forward", file=sys.stderr)
 
 
+def _auto_create_board(messages: list, all_agents: list, config: dict):
+    """Detect multi-agent collaboration in chat and auto-create a board if none exists.
+    
+    Scans recent messages for patterns like:
+    - "@agentA ... 让/给 agentB 来 review/做/check"
+    - User mentioning 2+ agents in one message
+    """
+    state = _load_state()
+    last_auto_create = state.get("last_auto_create", 0)
+    if time.time() - last_auto_create < 120:
+        return
+
+    agent_names_lower = set()
+    for a in all_agents:
+        agent_names_lower.add(a["name"].lower())
+        for alias in a.get("aliases", []):
+            agent_names_lower.add(alias.lower())
+
+    collab_patterns = ["让", "给", "review", "check", "来做", "来看", "帮忙", "接力", "轮到"]
+
+    for msg in messages[-10:]:
+        if msg.get("is_bot"):
+            continue
+
+        text = msg.get("content", "").lower()
+        ts = msg.get("ts", 0)
+
+        if ts <= last_auto_create:
+            continue
+
+        mentioned_agents = []
+        for a in all_agents:
+            names_to_check = [a["name"].lower()] + [x.lower() for x in a.get("aliases", [])]
+            if any(f"@{n}" in text or n in text for n in names_to_check):
+                mentioned_agents.append(a)
+
+        has_collab_intent = any(p in text for p in collab_patterns)
+        if len(mentioned_agents) < 2 and has_collab_intent:
+            for a in all_agents:
+                if a in mentioned_agents:
+                    continue
+                names_to_check = [a["name"].lower()] + [x.lower() for x in a.get("aliases", [])]
+                if any(n in text for n in names_to_check):
+                    mentioned_agents.append(a)
+                    break
+
+        if len(mentioned_agents) >= 2:
+            existing_boards = list(BOARD_DIR.glob("*.md")) if BOARD_DIR.exists() else []
+            has_pending = False
+            for b in existing_boards:
+                try:
+                    content = b.read_text(encoding="utf-8")
+                    if re.findall(r"^- \[ \]", content, re.MULTILINE):
+                        has_pending = True
+                        break
+                except OSError:
+                    continue
+
+            if not has_pending:
+                raw_text = msg.get("content", "")
+                title_match = re.search(r"研究.*?(\S{2,10})", raw_text)
+                title = title_match.group(1) if title_match else "collaboration task"
+
+                agent_names = [a["name"] for a in mentioned_agents]
+                first_agent = agent_names[0]
+                second_agent = agent_names[1] if len(agent_names) > 1 else agent_names[0]
+
+                BOARD_DIR.mkdir(parents=True, exist_ok=True)
+                from datetime import datetime as _dt
+                date_part = _dt.now().strftime("%Y%m%d")
+                seq = len(list(BOARD_DIR.glob(f"task-{date_part}-*.md"))) + 1
+                task_id = f"task-{date_part}-{seq:03d}"
+
+                board_content = f"""---
+id: {task_id}
+created_by: auto-detect
+created_at: {_dt.now().astimezone().isoformat(timespec='seconds')}
+status: in_progress
+priority: normal
+---
+
+# Task: {title} analysis
+
+## Goal
+{raw_text}
+
+## Context
+Auto-created from group chat message.
+
+## Work Log
+
+(No entries yet.)
+
+## TODOs
+- [ ] @{first_agent}: Research and write findings
+- [ ] @{second_agent}: Review findings, challenge assumptions
+"""
+                board_path = BOARD_DIR / f"{task_id}.md"
+                board_path.write_text(board_content, encoding="utf-8")
+                print(f"[auto] Created board {task_id} for: {', '.join(agent_names)}")
+
+                state["last_auto_create"] = int(time.time())
+                _save_state(state)
+                return
+
+
 def run_decisions(config: dict):
     """Check TODOs and trigger agents that have pending work."""
     state = _load_state()
@@ -233,7 +339,20 @@ def run_decisions(config: dict):
         channel = group_cfg.get("provider", "feishu")
         context_str = _read_context(group_id)
 
-        for agent_cfg in group_cfg.get("agents", []):
+        all_agents = group_cfg.get("agents", [])
+        messages = []
+        safe_id = group_id.replace("/", "_").replace(":", "_")
+        ctx_path = CONTEXT_DIR / f"group-{safe_id}.jsonl"
+        if ctx_path.exists():
+            for line in ctx_path.read_text(encoding="utf-8").strip().splitlines()[-20:]:
+                try:
+                    messages.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+        _auto_create_board(messages, all_agents, config)
+
+        for agent_cfg in all_agents:
             agent_name = agent_cfg["name"]
             profile = agent_cfg.get("profile", "default")
             session_id = agent_cfg.get("session_id", "")
