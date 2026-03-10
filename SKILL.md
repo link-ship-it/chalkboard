@@ -37,14 +37,14 @@ bb complete TASK_ID
 ### 1. Talk like a person, not a machine
 
 ❌ BAD:
-- "Task created. Task ID: task-20260305-001. Assigned to: potato, kabishou."
+- "Task created. Task ID: task-20260305-001. Assigned to: agent-a, agent-b."
 - "Now let me log my outline to the board."
 - "Running bb create..."
 
 ✅ GOOD:
-- "好，我先做研究列个提纲，写完了叫卡比兽来review。"
-- "提纲写好了！核心观点是XXX。@卡比兽 你来看看有没有问题，然后写初稿。"
-- "我觉得第三段论据不够强，建议加个具体案例。@马铃薯 你那边有相关数据吗？"
+- "Good, let me do the research first. I'll call agent-b when the outline is ready."
+- "Outline done! Core thesis is XXX. @agent-b take a look, then write the draft."
+- "The third argument is weak — needs a concrete example. @agent-a do you have data?"
 
 ### 2. Hide the plumbing
 
@@ -61,7 +61,7 @@ When you finish your part:
 3. Share the key substance — don't just say "I'm done, go check"
 
 Example handoff:
-> "提纲列好了，5个部分：Hook讲单模型迷恋、然后agent团队化、基础设施层、人的角色转变、未来展望。@卡比兽 你来review一下，觉得没问题就直接写初稿吧。我觉得第4部分可以更尖锐一点。"
+> "Outline ready — 5 sections: Hook on single-model obsession, agent teams, infra layer, human role shift, future outlook. @agent-b review this and start the draft if it looks good. I think section 4 could be sharper."
 
 ### 4. Discuss and iterate in chat
 
@@ -82,7 +82,7 @@ Example handoff:
 3. **Mark TODOs done** when you complete them
 4. **Leave notes for the next agent** in your log entry
 5. **Only ONE agent creates the task** — if the user assigns work to multiple agents, the first agent mentioned should create the board. Other agents wait and read. Do NOT both create separate tasks.
-6. **Use your display name in TODOs** — write `@马铃薯` not `@malingshu`, `@卡比兽` not `@kabishou`. Use the name others call you in the chat.
+6. **Use your display name in TODOs** — use the name others call you in the chat, not internal IDs.
 
 ## Cron Reminders
 
@@ -95,18 +95,18 @@ When you receive a cron reminder about pending TODOs:
 
 ## Example Flow
 
-User: "写一篇AI Agent协作的英文短文，马铃薯研究+提纲，卡比兽review+写稿"
+User: "Write a short article on AI agent collaboration. Agent-a does research + outline, agent-b reviews + writes."
 
-**马铃薯 (silently runs bb create, bb log):**
-> "好，我来做研究。"
+**Agent-a (silently runs bb create, bb log):**
+> "On it, doing the research now."
 
 *[works for a moment]*
 
-> "研究做完了，提纲列了5个部分：1) Hook — 单模型时代结束 2) 专业化agent团队 3) 协议层 4) 人变成指挥官 5) 未来展望。核心论点是：未来最强的AI不是一个超级模型，而是一支agent团队。@卡比兽 你来review，觉得OK就直接写初稿，500字左右，X发布风格。"
+> "Research done, outlined 5 sections: 1) Hook — end of single-model era 2) Specialized agent teams 3) Protocol layer 4) Human as conductor 5) Future outlook. Core thesis: the strongest AI isn't one super model, it's a team of agents. @agent-b review this, then write the draft — 500 words, X/Twitter style."
 
-**卡比兽 (silently runs bb read, bb log):**
-> "@马铃薯 提纲整体不错，但第3部分讲协议层对普通读者太技术了，建议换成具体场景——比如agent帮你订机票的同时另一个在做行程规划。我直接按这个方向改了写初稿。"
+**Agent-b (silently runs bb read, bb log):**
+> "@agent-a Outline looks good, but section 3 on protocol layer is too technical for general readers. Suggest replacing with a concrete scenario — like one agent booking flights while another plans the itinerary. I'll write the draft with that angle."
 
 *[writes draft]*
 
-> "初稿写好了：[paste key excerpt]... 帅爷你看看这个调性行不行？"
+> "Draft ready: [paste key excerpt]... What do you think of this direction?"

@@ -1,6 +1,7 @@
 <p align="center">
   <h1 align="center">Chalkboard</h1>
   <p align="center">Multi-agent collaboration through shared Markdown files</p>
+  <p align="center"><i>Your AI agents can't talk to each other. Chalkboard fixes that.</i></p>
 </p>
 
 <p align="center">
@@ -20,245 +21,199 @@
 
 ## The Problem
 
-IM platforms (Telegram, Discord, Slack) **don't let bots read each other's messages**. If you run multiple AI agents in a group chat, they're completely blind to one another — no shared context, no coordination, no collaboration.
+IM platforms (Feishu, Telegram, Discord, Slack) **don't let bots read each other's messages**. If you run multiple AI agents in a group chat, they're completely blind to one another.
 
 ## The Solution
 
-**Chalkboard** uses the local filesystem as a shared communication layer. Agents read and write structured Markdown files with file-level locking, TODO tracking, and append-only work logs.
+**Chalkboard** gives your agents two superpowers:
 
-No database. No server. No network. Just files.
+1. **Shared task boards** (Markdown files) for structured collaboration — TODO tracking, work logs, turn control
+2. **Message poller** that fetches ALL group messages (including other bots') via platform APIs, so agents have full context
+3. **Decision engine** that triggers agents only when it's their turn, and forwards their responses back to the group chat
+
+No database. No server. No external dependencies. Just Python + files.
 
 ```
-User says in group chat: "Research NVDA, Potato does analysis, Snorlax reviews"
-       │
-       ├──→ Agent A (Potato) sees the message
-       │    └→ bb create    → creates ~/.chalkboard/boards/task-001.md
-       │    └→ bb log       → writes research findings to the board
-       │
-       └──→ Agent B (Snorlax) sees the message
-            └→ bb read      → reads the board, sees Potato's work
-            └→ bb log       → adds review and challenges
-            └→ bb todo --done → marks task complete
+User: "Research NVDA — Agent A does analysis, Agent B reviews"
+
+  Chalkboard daemon (every 5 seconds):
+    1. Poller    → fetches all group messages (Feishu/Telegram API)
+    2. Decide    → Agent A has a TODO and it's their turn? → trigger
+    3. Trigger   → openclaw agent --session-id → agent does the work
+    4. Forward   → captures agent reply → sends to group chat
+    5. Repeat    → Agent B's turn now → trigger Agent B
 ```
 
-Agents exchange information through the `.md` file, not through IM messages.
+## Quick Start (2 minutes)
 
-## How It Works
+**Requirements:** Python 3.8+, [OpenClaw](https://github.com/openclaw/openclaw) with 2+ agent profiles
 
-Each task is a Markdown file with YAML frontmatter, structured sections, and append-only logs:
-
-```markdown
----
-id: task-20260304-001
-status: in_progress
-priority: normal
----
-
-# Task: NVDA Deep Dive
-
-## Goal
-5-round research method, produce a target price
-
-## Agent Assignments
-| Agent   | Role       | Status      |
-|---------|------------|-------------|
-| potato  | researcher | in_progress |
-| snorlax | reviewer   | pending     |
-
-## Work Log
-
-### potato — 2026-03-04 14:30
-FY2026 revenue $216B, gross margin 71%, target price $252...
-
-### snorlax — 2026-03-04 15:00
-Challenge: Q1 margin dip to 60% needs explanation. $252 too aggressive?
-
-### potato — 2026-03-04 15:30
-Revised target $245. Margin recovers to 75% by Q4...
-
-## TODOs
-- [x] @potato: Complete 5-round research
-- [x] @snorlax: Review and challenge findings
-- [ ] @potato: Publish final report
-```
-
-Key design choices:
-- **Append-only work logs** — agents never overwrite each other's entries
-- **File locking** — shared locks for reads, exclusive locks for writes (`fcntl` on Unix, `msvcrt` on Windows)
-- **TODO tracking** — `@agent` mentions with checkbox status
-- **Task lifecycle** — create → in_progress → done → archived
-
-## Quick Start (5 minutes)
-
-**Requirements:** Python 3.8+ (no external dependencies)
-
-### 1. Install (one command)
+### Step 1: Clone
 
 ```bash
 git clone https://github.com/link-ship-it/chalkboard.git
 cd chalkboard
-python3 scripts/board.py init \
-  --agents "agent-a,agent-b" \
+```
+
+### Step 2: Discover your agents
+
+```bash
+python3 scripts/board.py agents
+```
+
+Auto-detects all OpenClaw agents and group chats on your machine:
+
+```
+Found 2 agent(s):
+  Profile         Name          Config Dir
+  default         Alice         ~/.openclaw
+  alpha           Bob           ~/.openclaw-alpha
+
+Found 3 group chat(s):
+  Channel      Chat ID              Name
+  feishu       oc_abc123...         my-team
+
+Suggested init command:
+  bb init \
+    --agents "Alice,Bob" \
+    --profiles "default,alpha" \
+    --channel feishu \
+    --notify-target oc_abc123... \
+    --enable-poller
+```
+
+### Step 3: Run the suggested command
+
+```bash
+bb init \
+  --agents "Alice,Bob" \
   --profiles "default,alpha" \
-  --aliases "Agent A,alice;Agent B,bob" \
-  --channel feishu
+  --channel feishu \
+  --notify-target oc_abc123... \
+  --enable-poller
 ```
 
-That's it. The `init` command automatically:
-- Creates `~/.chalkboard/boards/` and `archive/` directories
-- Installs the skill to all matching [OpenClaw](https://github.com/openclaw/openclaw) profiles
-- Installs the `bb` CLI to `~/.local/bin`
-- Configures cron jobs so agents automatically check for pending TODOs (matching all aliases)
-- Sets the delivery channel so cron results go to the right chat
-- Restarts the OpenClaw gateway
+This automatically:
+- Creates directories and installs the Chalkboard skill
+- Generates `config.json` with agents, sessions, and credentials (auto-discovered from OpenClaw)
+- Sets up a launchd daemon that polls messages + checks TODOs + triggers agents every 5 seconds
+- Forwards agent responses directly to the group chat
 
-**Aliases** let agents find their TODOs regardless of how they're mentioned (`@Agent A`, `@alice`, or `@agent-a` all match). Separate alias groups with `;`, names within a group with `,`.
-
-After init, just add your bots to a group chat and start assigning tasks.
-
-### 2. Create a task
+### Step 4: Create a task and watch
 
 ```bash
-bb create \
-  --title "Research AI frameworks" \
-  --goal "Compare top 5 frameworks" \
-  --assign agent-a,agent-b \
-  --agent agent-a
+bb create --title "Research AI frameworks" \
+  --assign alice,bob \
+  --template research
 ```
 
-### 3. Collaborate
+Then tell Agent A in the group chat to check the board. The daemon handles the rest:
+- Agent A does Round 1 → daemon detects Agent B has Round 2 → triggers Agent B → forwards reply to group → daemon detects Agent A has Round 3 → triggers Agent A → done.
 
-```bash
-# Agent A does research, writes findings
-bb log task-20260305-001 --agent agent-a \
-  --content "Found 3 key competitors: X, Y, Z..."
+## How It Works
 
-# Agent B reads the board, sees what A wrote
-bb read task-20260305-001
-
-# Agent B adds analysis
-bb log task-20260305-001 --agent agent-b \
-  --content "Agent A missed competitor W, which has 40% market share..."
-
-# Mark your TODO as done
-bb todo task-20260305-001 --done "Research competitors"
-
-# Check what's still pending
-bb my-todos --agent agent-b
+```
+┌──────────────┐  ┌──────────────┐
+│   Agent A    │  │   Agent B    │
+│  (Feishu)    │  │  (Telegram)  │
+└──────┬───────┘  └──────┬───────┘
+       │                 │
+       ▼                 ▼
+┌─────────────────────────────────────────────────┐
+│              ~/.chalkboard/                      │
+│                                                  │
+│  boards/        Task files (Markdown + TODOs)    │
+│  context/       Group messages (JSONL)            │
+│  config.json    Agents, sessions, credentials    │
+│  daemon.sh      Poller + Decision + Trigger      │
+└─────────────────────────────────────────────────┘
+       │
+┌──────▼──────────────────────────────────────────┐
+│  Chalkboard Daemon (launchd, every 5s)           │
+│                                                  │
+│  1. poller.py   → Fetch ALL group messages       │
+│                   (Feishu API / Telegram API)     │
+│                                                  │
+│  2. decide.py   → Does any agent have a TODO?    │
+│                   Is it their turn?               │
+│                   → Trigger via session inject     │
+│                                                  │
+│  3. Forward     → Capture agent response          │
+│                   → Send to group via message API  │
+└─────────────────────────────────────────────────┘
 ```
 
-### 4. Complete and archive
+### Decision Logic
 
-```bash
-bb complete task-20260305-001
-# File moves from boards/ to archive/
+The decision engine checks each agent in order:
+
+1. **Does this agent have a pending TODO on the chalkboard?** If no → skip
+2. **Is it this agent's turn?** (first uncompleted TODO belongs to this agent?) If no → skip
+3. **Cooldown passed?** (prevent rapid re-triggering) If no → skip
+4. **Trigger** → inject task + context into agent session
+5. **Forward** → capture reply, send to group chat via `openclaw message send`
+
+### Two-Step Trigger + Forward
+
+The key innovation: instead of relying on agents to post their own replies (unreliable), Chalkboard captures the agent's output and forwards it:
+
+```
+Step 1: openclaw agent --session-id xxx --message "do your TODO" --json
+        → Agent executes, produces response in JSON
+
+Step 2: Parse response → openclaw message send --channel feishu --target group
+        → Response appears in the group chat
 ```
 
-### 5. (Optional) Cron reminders
+If the agent produces no text (it used tools instead), the daemon extracts the latest work log entry from the board file and forwards that.
 
-Set up periodic TODO checks so agents don't forget pending work:
+## Features
 
-```yaml
-# In your OpenClaw config
-cron:
-  - schedule: "*/2 * * * *"
-    command: "python3 ~/.openclaw-shared/skills/chalkboard/scripts/check_todos.py agent-a"
-    announce: true
-```
+| Feature | Description |
+|---------|-------------|
+| **Message poller** | Fetches ALL group messages via Feishu/Telegram API (including other bots) |
+| **TODO-driven triggers** | Agents are triggered based on Chalkboard TODOs, not unreliable chat parsing |
+| **Response forwarding** | Captures agent output and posts it to the group chat |
+| **Agent auto-discovery** | `bb agents` scans for OpenClaw profiles + group chats |
+| **Board templates** | `--template research/code-review/brainstorm/content` |
+| **Turn control** | First uncompleted TODO determines whose turn it is |
+| **Agent identity** | `CHALKBOARD_AGENT_ID` prevents marking others' TODOs |
+| **Cross-platform** | Feishu + Telegram providers, pluggable design |
+| **Zero dependencies** | Pure Python 3.8+ standard library |
 
 ## CLI Reference
 
 | Command | Description |
 |---------|-------------|
-| `bb create` | Create a new task board |
+| `bb agents` | Auto-discover agents and group chats |
+| `bb init` | Set up Chalkboard (skill, daemon, poller, config) |
+| `bb create` | Create a new task board (supports `--template`) |
 | `bb list` | List all active tasks |
 | `bb read <task-id>` | Read a task board |
 | `bb log <task-id>` | Append a work log entry |
 | `bb todo <task-id> --add` | Add a TODO for an agent |
-| `bb todo <task-id> --done` | Mark a TODO as complete |
-| `bb my-todos --agent <name>` | Show your pending TODOs |
+| `bb todo <task-id> --done` | Mark a TODO as complete (identity-checked) |
+| `bb my-todos --agent <name>` | Show pending TODOs (supports aliases) |
 | `bb complete <task-id>` | Archive a completed task |
+| `bb poller status` | Show daemon status |
+| `bb poller start/stop` | Start or stop the daemon |
+| `bb context --group <id>` | View recent group messages from poller |
 
-## Use Cases
-
-### Stock Research (Researcher + Reviewer)
-
-Two agents analyze a stock from different angles. One does deep research, the other pokes holes.
-
-```bash
-bb create --title "NVDA analysis" \
-  --goal "Buy/sell recommendation with target price" \
-  --assign analyst,reviewer --agent analyst --priority high
-
-bb todo TASK_ID --add "@analyst: Financials, P/E, revenue growth, moat analysis"
-bb todo TASK_ID --add "@reviewer: Challenge assumptions, check risk factors"
-```
-
-### Content Pipeline (Research → Draft → Edit)
+## Templates
 
 ```bash
-bb create --title "Blog: Future of AI agents" \
-  --goal "Publish a 2000-word post" \
-  --assign researcher,writer,editor --agent user
-
-bb todo TASK_ID --add "@researcher: Gather 5 recent sources on AI agent trends"
-bb todo TASK_ID --add "@writer: Draft post using researcher's sources"
-bb todo TASK_ID --add "@editor: Review for clarity, tone, and accuracy"
+bb create --title "..." --assign a,b --template research
+bb create --title "..." --assign a,b --template code-review
+bb create --title "..." --assign a,b --template brainstorm
+bb create --title "..." --assign a,b,c --template content
 ```
 
-### Code Review (Multi-perspective)
-
-```bash
-bb create --title "Review PR #42 — auth module" \
-  --goal "Security + performance + style review" \
-  --assign sec-reviewer,perf-reviewer,style-reviewer --agent user
-
-bb todo TASK_ID --add "@sec-reviewer: Check auth bypass, injection, token handling"
-bb todo TASK_ID --add "@perf-reviewer: Check N+1 queries, unnecessary allocations"
-bb todo TASK_ID --add "@style-reviewer: Check naming, structure, test coverage"
-```
-
-### Multi-Perspective Research
-
-```bash
-bb create --title "AI framework comparison" \
-  --goal "Compare LangChain, CrewAI, AutoGen, OpenClaw" \
-  --assign researcher-1,researcher-2,synthesizer --agent user
-
-bb todo TASK_ID --add "@researcher-1: Research LangChain and CrewAI"
-bb todo TASK_ID --add "@researcher-2: Research AutoGen and OpenClaw"
-bb todo TASK_ID --add "@synthesizer: Read both logs and create comparison matrix"
-```
-
-> More examples in [examples/](examples/) and [Use Cases](docs/use-cases.md).
-
-## Architecture
-
-```
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│   Agent A    │  │   Agent B    │  │   Agent C    │
-│  (Telegram)  │  │  (Discord)   │  │   (Slack)    │
-└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-       │                 │                 │
-       │     bb CLI      │     bb CLI      │
-       │   (board.py)    │   (board.py)    │
-       ▼                 ▼                 ▼
-┌─────────────────────────────────────────────────┐
-│              Local Filesystem                    │
-│                                                  │
-│  ~/.chalkboard/boards/     (active tasks)        │
-│  ~/.chalkboard/archive/    (completed tasks)     │
-│                                                  │
-│  File locking: fcntl (Unix) / msvcrt (Windows)   │
-└─────────────────────────────────────────────────┘
-```
-
-- **Zero dependencies** — pure Python 3.8+ standard library
-- **Cross-platform file locking** — prevents concurrent write conflicts
-- **Git-friendly** — plain Markdown files, easy to version control and diff
-- **Works with any agent platform** — anything that can run a shell command works. First-class [OpenClaw](https://github.com/openclaw/openclaw) integration included (skill auto-install, cron reminders), but Chalkboard is fully standalone.
-
-> Deep dive: [Architecture docs](docs/architecture.md)
+| Template | Rounds | Flow |
+|----------|--------|------|
+| `research` | 3 | A researches → B researches → A synthesizes |
+| `code-review` | 3 | A security review → B perf review → A summary |
+| `brainstorm` | 3 | A proposes ideas → B ranks → A plans top 3 |
+| `content` | 4 | A gathers sources → B drafts → A reviews → B finalizes |
 
 ## Environment Variables
 
@@ -266,6 +221,8 @@ bb todo TASK_ID --add "@synthesizer: Read both logs and create comparison matrix
 |----------|---------|-------------|
 | `CHALKBOARD_BOARD_DIR` | `~/.chalkboard/boards` | Active task boards |
 | `CHALKBOARD_ARCHIVE_DIR` | `~/.chalkboard/archive` | Completed tasks |
+| `CHALKBOARD_AGENT_ID` | (empty) | Agent identity for TODO ownership |
+| `CHALKBOARD_CONTEXT_DIR` | `~/.chalkboard/context` | Polled message storage |
 
 ## License
 
