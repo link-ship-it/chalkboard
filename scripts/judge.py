@@ -24,11 +24,10 @@ Your job is to read the recent chat messages and decide if any agent needs to be
 RULES:
 1. Only trigger an agent if another agent or human EXPLICITLY asked it to do something (review, research, check, etc.)
 2. Do NOT trigger if the request is old — look at timestamps, only act on the MOST RECENT conversation
-3. Do NOT trigger if the agent already responded to this specific request (check if there's a reply after the request)
+3. Do NOT trigger if the agent already responded to this specific request — look for a [bot] reply AFTER the request
 4. If multiple agents are mentioned, only trigger the one that should act NEXT (not all of them)
 5. If no action is needed, return null
-6. CRITICAL: If the human's message starts with @agent_name (e.g. @卡比兽, @马铃薯), that agent's Gateway ALREADY handles the direct @ mention automatically. Do NOT trigger that agent — it will double-reply. Only trigger a DIFFERENT agent if the message asks them to do something (e.g. "马铃薯来check" means trigger 马铃薯, NOT the agent who was @'d).
-7. @_user_1, @_user_2 etc. are Feishu @ mention placeholders. They refer to the DIRECTLY mentioned bot, which Gateway already handles. Do NOT trigger that agent.
+6. CRITICAL: If the human directly @mentioned an agent (e.g. "@卡比兽 do X"), that agent's Gateway ALREADY received the message and will reply on its own. Do NOT trigger that agent — it will cause a double reply. Only trigger a DIFFERENT agent if the message semantically asks them to act (e.g. "@卡比兽 analyze Google, 马铃薯 come check" → do NOT trigger 卡比兽, only trigger 马铃薯 AFTER 卡比兽 finishes)
 
 Respond with ONLY valid JSON, no markdown, no explanation:
 {"trigger": "agent_name_or_null", "reason": "one sentence why", "task": "what the agent should do"}
@@ -45,50 +44,16 @@ def _build_prompt(messages: list, agents: list) -> str:
         alias_str = f" (aliases: {aliases})" if aliases else ""
         parts.append(f"- {a['name']}{alias_str}")
 
-    # Build a lookup to resolve raw sender IDs and @_user_N placeholders
-    # to friendly agent names.
-    _id_to_name = {}
-    for a in agents:
-        for alias in a.get("aliases", []):
-            _id_to_name[alias.lower()] = a["name"]
-        _id_to_name[a["name"].lower()] = a["name"]
-
-    def _resolve_sender(raw_name: str) -> str:
-        return _id_to_name.get(raw_name.lower(), raw_name)
-
-    def _resolve_mentions(text: str) -> str:
-        """Replace @_user_N placeholders with real agent names.
-
-        Feishu rich-text posts embed mentions as @_user_1, @_user_2 etc.
-        We scan bot messages above the current message to build an ordered
-        list of bots mentioned by their app-id in sender fields, then map
-        _user_1 → first agent, _user_2 → second agent.  As a fallback we
-        just use the agent list order from config.
-        """
-        import re
-        for idx, a in enumerate(agents):
-            placeholder = f"@_user_{idx + 1}"
-            if placeholder in text:
-                display = a.get("aliases", [a["name"]])[0]
-                text = text.replace(placeholder, f"@{display}")
-        # Also handle raw IDs like @ou_835bd544...
-        for a in agents:
-            for alias in a.get("aliases", []):
-                # nothing to do — already friendly
-                pass
-        return text
-
     parts.append("\nRecent messages (newest last):")
     for msg in messages:
         ts = msg.get("ts", 0)
         from datetime import datetime
         time_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "??:??"
-        name = _resolve_sender(msg.get("sender_name", "?"))
+        name = msg.get("sender_name", "?")
         bot = " [bot]" if msg.get("is_bot") else ""
         text = msg.get("content", "")
         if text == "请升级至最新版本客户端，以查看内容":
             text = "(card message — content not available via API)"
-        text = _resolve_mentions(text)
         if len(text) > 300:
             text = text[:300] + "..."
         parts.append(f"[{time_str}] {name}{bot}: {text}")
@@ -102,7 +67,7 @@ class AnthropicJudge:
 
     API_URL = "https://api.anthropic.com/v1/messages"
 
-    def __init__(self, model: str = "claude-opus-4-6", api_key: str = ""):
+    def __init__(self, model: str = "claude-sonnet-4-6", api_key: str = ""):
         self.model = model
         self.api_key = api_key
 
@@ -199,21 +164,10 @@ def _parse_response(text: str) -> Optional[dict]:
 
 
 def create_judge(config: dict):
-    """Create a judge instance from config.
-    
-    Config format:
-    {
-        "judge": {
-            "provider": "anthropic" | "openai",
-            "model": "claude-opus-4-6" | "gpt-4o-mini" | ...,
-            "api_key_env": "ANTHROPIC_API_KEY" | "OPENAI_API_KEY",
-            "base_url": "https://..." (optional, for OpenAI-compatible endpoints)
-        }
-    }
-    """
+    """Create a judge instance from config."""
     judge_cfg = config.get("judge", {})
     provider = judge_cfg.get("provider", "anthropic")
-    model = judge_cfg.get("model", "claude-opus-4-6")
+    model = judge_cfg.get("model", "claude-sonnet-4-6")
     api_key_env = judge_cfg.get("api_key_env", "ANTHROPIC_API_KEY")
     api_key = os.environ.get(api_key_env, "")
 

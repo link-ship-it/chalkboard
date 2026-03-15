@@ -72,7 +72,7 @@ def _append_message(group_id: str, msg: dict):
         f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
 
-def _trim_context(group_id: str, max_lines: int = 100):
+def _trim_context(group_id: str, max_lines: int = 200):
     """Keep only the last N lines in the context file."""
     path = _context_file(group_id)
     if not path.exists():
@@ -80,6 +80,108 @@ def _trim_context(group_id: str, max_lines: int = 100):
     lines = path.read_text(encoding="utf-8").strip().splitlines()
     if len(lines) > max_lines:
         path.write_text("\n".join(lines[-max_lines:]) + "\n", encoding="utf-8")
+
+
+# ── Name Resolution ──────────────────────────────────────────────────────
+
+
+def build_id_name_map(config: dict) -> dict:
+    """Build a mapping from raw sender IDs to friendly display names.
+
+    Sources:
+      - config.groups.*.agents[].app_id  → first alias or agent name
+      - config.users                      → human user display names
+    """
+    id_map = {}
+    for gcfg in config.get("groups", {}).values():
+        for a in gcfg.get("agents", []):
+            app_id = a.get("app_id", "")
+            display = (a.get("aliases") or [a["name"]])[0]
+            if app_id:
+                id_map[app_id] = display
+            id_map[a["name"]] = display
+    for uid, name in config.get("users", {}).items():
+        id_map[uid] = name
+    return id_map
+
+
+def _resolve_name(raw_id: str, id_map: dict) -> str:
+    return id_map.get(raw_id, raw_id)
+
+
+def _apply_mention_map(text: str, mention_map: dict) -> str:
+    """Replace @_user_N placeholders with real display names."""
+    for placeholder, name in mention_map.items():
+        text = text.replace(placeholder, f"@{name}")
+    return text
+
+
+def _parse_feishu_content(content_raw: str, mentions: list = None) -> str:
+    """Parse Feishu message content into plain text.
+
+    Handles text, rich-text/post, and card messages.
+    When *mentions* (from the API ``item["mentions"]``) is provided,
+    ``@_user_N`` placeholders are replaced with real display names.
+    """
+    mention_map = {}
+    for m in (mentions or []):
+        key = m.get("key", "")
+        name = m.get("name", "")
+        if key and name:
+            mention_map[key] = name
+
+    try:
+        obj = json.loads(content_raw)
+    except (json.JSONDecodeError, TypeError):
+        return _apply_mention_map(content_raw, mention_map)
+
+    if isinstance(obj, str):
+        return _apply_mention_map(obj, mention_map)
+
+    if "text" in obj and isinstance(obj["text"], str):
+        return _apply_mention_map(obj["text"], mention_map)
+
+    parts = []
+    content_blocks = obj.get("content", [])
+    if isinstance(content_blocks, list):
+        for block in content_blocks:
+            if isinstance(block, list):
+                for elem in block:
+                    if not isinstance(elem, dict):
+                        continue
+                    tag = elem.get("tag", "")
+                    if tag == "text":
+                        parts.append(elem.get("text", ""))
+                    elif tag == "at":
+                        user_id = elem.get("user_id", "")
+                        name = mention_map.get(f"@{user_id}",
+                               elem.get("user_name", user_id))
+                        parts.append(f"@{name}")
+                    elif tag == "a":
+                        parts.append(elem.get("text", elem.get("href", "")))
+            elif isinstance(block, dict):
+                if block.get("tag") == "text":
+                    parts.append(block.get("text", ""))
+
+    elements = obj.get("elements", [])
+    if isinstance(elements, list):
+        for block in elements:
+            if isinstance(block, list):
+                for elem in block:
+                    if not isinstance(elem, dict):
+                        continue
+                    tag = elem.get("tag", "")
+                    if tag == "text":
+                        parts.append(elem.get("text", ""))
+                    elif tag == "at":
+                        parts.append(f"@{elem.get('user_name', '')}")
+            elif isinstance(block, dict):
+                if block.get("tag") == "text":
+                    parts.append(block.get("text", ""))
+
+    result = "".join(parts).strip()
+    text = result if result else content_raw
+    return _apply_mention_map(text, mention_map)
 
 
 # ── Feishu Provider ──────────────────────────────────────────────────────
@@ -91,9 +193,10 @@ class FeishuProvider:
     TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
     MESSAGES_URL = "https://open.feishu.cn/open-apis/im/v1/messages"
 
-    def __init__(self, app_id: str, app_secret: str):
+    def __init__(self, app_id: str, app_secret: str, id_name_map: dict = None):
         self.app_id = app_id
         self.app_secret = app_secret
+        self.id_name_map = id_name_map or {}
         self._token = ""
         self._token_expires = 0
 
@@ -122,7 +225,10 @@ class FeishuProvider:
         if not token:
             return []
 
-        params = f"?container_id_type=chat&container_id={group_id}&page_size=20"
+        params = (
+            f"?container_id_type=chat&container_id={group_id}"
+            f"&page_size=20&user_id_type=open_id"
+        )
         if since_ts:
             params += f"&start_time={since_ts}"
 
@@ -150,11 +256,10 @@ class FeishuProvider:
 
             body = item.get("body", {})
             content_raw = body.get("content", "{}")
-            try:
-                content_obj = json.loads(content_raw)
-                text = content_obj.get("text", content_raw)
-            except json.JSONDecodeError:
-                text = content_raw
+            mentions = item.get("mentions", [])
+            text = _parse_feishu_content(content_raw, mentions=mentions)
+
+            sender_name = _resolve_name(sender_id, self.id_name_map)
 
             create_time = item.get("create_time", "0")
             try:
@@ -165,7 +270,7 @@ class FeishuProvider:
             messages.append({
                 "ts": ts,
                 "sender": f"{'bot' if is_bot else 'user'}:{sender_id}",
-                "sender_name": sender_id,
+                "sender_name": sender_name,
                 "is_bot": is_bot,
                 "content": text,
                 "msg_id": msg_id,
@@ -267,7 +372,7 @@ def poll_group(provider, group_id: str) -> int:
         state["last_ts"][group_id] = last_ts
         _save_state(state)
 
-    _trim_context(group_id, max_lines=100)
+    _trim_context(group_id, max_lines=200)
     return new_count
 
 
@@ -299,7 +404,7 @@ def format_context(messages: list) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Chalkboard Poller — fetch group chat messages")
-    parser.add_argument("--config", default="", help="Path to chalkboard config.yaml")
+    parser.add_argument("--config", default="", help="Path to chalkboard config.json")
     parser.add_argument("--provider", choices=["feishu", "telegram"], help="IM provider")
     parser.add_argument("--group", default="", help="Group chat ID")
     parser.add_argument("--app-id", default="", help="Feishu App ID")
@@ -321,11 +426,15 @@ def main():
             cfg = yaml.safe_load(Path(args.config).read_text())
         except ImportError:
             cfg = json.loads(Path(args.config).read_text())
+
+        id_map = build_id_name_map(cfg)
+
         for gid, gcfg in cfg.get("groups", {}).items():
             prov = gcfg.get("provider", "feishu")
             if prov == "feishu":
                 feishu_cfg = cfg.get("feishu", {})
-                provider = FeishuProvider(feishu_cfg["app_id"], feishu_cfg["app_secret"])
+                provider = FeishuProvider(feishu_cfg["app_id"], feishu_cfg["app_secret"],
+                                          id_name_map=id_map)
             elif prov == "telegram":
                 tg_cfg = cfg.get("telegram", {})
                 provider = TelegramProvider(tg_cfg["bot_token"])

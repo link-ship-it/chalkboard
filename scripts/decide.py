@@ -84,33 +84,6 @@ def _find_agent_config(agent_name: str, all_agents: list) -> dict:
     return {}
 
 
-def _was_directly_mentioned(agent_cfg: dict, recent_messages: list) -> bool:
-    """Check if the agent was directly @mentioned in the most recent human message.
-
-    If yes, Gateway already handles the reply — daemon should NOT double-trigger.
-    Only returns True when the LAST human message explicitly @'d this agent.
-    """
-    bot_names = [agent_cfg["name"].lower()] + [
-        a.lower() for a in agent_cfg.get("aliases", [])
-    ]
-    last_human_msgs = [m for m in recent_messages if not m.get("is_bot")]
-    if not last_human_msgs:
-        return False
-
-    last_human = last_human_msgs[-1]
-    content_lower = last_human.get("content", "").lower()
-
-    # Check @name patterns in text
-    if any(f"@{n}" in content_lower for n in bot_names):
-        return True
-
-    # Check structured mention objects from the poller
-    for mention in last_human.get("mentions", []):
-        if mention.get("name", "").lower() in bot_names:
-            return True
-
-    return False
-
 
 def _get_board_todos(aliases: list) -> list:
     """Fallback: check board TODOs."""
@@ -263,7 +236,7 @@ def run_decisions(config: dict):
 
         # Strategy 1: LLM Judge (primary)
         if judge and not triggered:
-            recent = messages[-10:]
+            recent = messages[-20:]
             decision = judge.decide(recent, all_agents)
 
             if decision:
@@ -271,9 +244,6 @@ def run_decisions(config: dict):
                 reason = decision.get("reason", "")
                 task = decision.get("task", "")
                 agent_cfg = _find_agent_config(trigger_name, all_agents)
-
-                if agent_cfg and _was_directly_mentioned(agent_cfg, recent):
-                    agent_cfg = None
 
                 if agent_cfg:
                     trigger_key = f"{group_id}:{agent_cfg['name']}"
