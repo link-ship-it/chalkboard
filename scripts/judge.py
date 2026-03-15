@@ -9,7 +9,7 @@ Usage:
     from judge import create_judge
     judge = create_judge(config)
     result = judge.decide(messages, agents)
-    # result = {"trigger": "agent-b", "reason": "...", "task": "review research"}
+    # result = {"trigger": "kabishou", "reason": "...", "task": "review PDD research"}
 """
 
 import json
@@ -27,6 +27,8 @@ RULES:
 3. Do NOT trigger if the agent already responded to this specific request (check if there's a reply after the request)
 4. If multiple agents are mentioned, only trigger the one that should act NEXT (not all of them)
 5. If no action is needed, return null
+6. CRITICAL: If the human's message starts with @agent_name (e.g. @卡比兽, @马铃薯), that agent's Gateway ALREADY handles the direct @ mention automatically. Do NOT trigger that agent — it will double-reply. Only trigger a DIFFERENT agent if the message asks them to do something (e.g. "马铃薯来check" means trigger 马铃薯, NOT the agent who was @'d).
+7. @_user_1, @_user_2 etc. are Feishu @ mention placeholders. They refer to the DIRECTLY mentioned bot, which Gateway already handles. Do NOT trigger that agent.
 
 Respond with ONLY valid JSON, no markdown, no explanation:
 {"trigger": "agent_name_or_null", "reason": "one sentence why", "task": "what the agent should do"}
@@ -43,16 +45,50 @@ def _build_prompt(messages: list, agents: list) -> str:
         alias_str = f" (aliases: {aliases})" if aliases else ""
         parts.append(f"- {a['name']}{alias_str}")
 
+    # Build a lookup to resolve raw sender IDs and @_user_N placeholders
+    # to friendly agent names.
+    _id_to_name = {}
+    for a in agents:
+        for alias in a.get("aliases", []):
+            _id_to_name[alias.lower()] = a["name"]
+        _id_to_name[a["name"].lower()] = a["name"]
+
+    def _resolve_sender(raw_name: str) -> str:
+        return _id_to_name.get(raw_name.lower(), raw_name)
+
+    def _resolve_mentions(text: str) -> str:
+        """Replace @_user_N placeholders with real agent names.
+
+        Feishu rich-text posts embed mentions as @_user_1, @_user_2 etc.
+        We scan bot messages above the current message to build an ordered
+        list of bots mentioned by their app-id in sender fields, then map
+        _user_1 → first agent, _user_2 → second agent.  As a fallback we
+        just use the agent list order from config.
+        """
+        import re
+        for idx, a in enumerate(agents):
+            placeholder = f"@_user_{idx + 1}"
+            if placeholder in text:
+                display = a.get("aliases", [a["name"]])[0]
+                text = text.replace(placeholder, f"@{display}")
+        # Also handle raw IDs like @ou_835bd544...
+        for a in agents:
+            for alias in a.get("aliases", []):
+                # nothing to do — already friendly
+                pass
+        return text
+
     parts.append("\nRecent messages (newest last):")
     for msg in messages:
         ts = msg.get("ts", 0)
         from datetime import datetime
         time_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else "??:??"
-        name = msg.get("sender_name", "?")
+        name = _resolve_sender(msg.get("sender_name", "?"))
         bot = " [bot]" if msg.get("is_bot") else ""
         text = msg.get("content", "")
         if text == "请升级至最新版本客户端，以查看内容":
             text = "(card message — content not available via API)"
+        text = _resolve_mentions(text)
         if len(text) > 300:
             text = text[:300] + "..."
         parts.append(f"[{time_str}] {name}{bot}: {text}")
